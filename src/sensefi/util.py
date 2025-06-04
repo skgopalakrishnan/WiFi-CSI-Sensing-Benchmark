@@ -167,8 +167,8 @@ def load_data_n_model(dataset_name, model_name, root):
     elif dataset_name == 'Widar':
         print('using dataset: Widar')
         num_classes = classes['Widar']
-        train_loader = torch.utils.data.DataLoader(dataset=Widar_Dataset(root + 'Widardata/train/'), batch_size=64, shuffle=True)
-        test_loader = torch.utils.data.DataLoader(dataset=Widar_Dataset(root + 'Widardata/test/'), batch_size=128, shuffle=False)
+        train_loader = torch.utils.data.DataLoader(dataset=Widar_Dataset(root + 'Widardata/train/'), batch_size=64, shuffle=True, num_workers=4)
+        test_loader = torch.utils.data.DataLoader(dataset=Widar_Dataset(root + 'Widardata/test/'), batch_size=128, shuffle=False, num_workers=4)
         if model_name == 'MLP':
             print("using model: MLP")
             model = Widar_MLP(num_classes)

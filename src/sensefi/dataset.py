@@ -1,13 +1,14 @@
 import numpy as np
 import glob
+import os
 import scipy.io as sio
 import torch
 from torch.utils.data import Dataset, DataLoader
 
 
 def UT_HAR_dataset(root_dir):
-    data_list = glob.glob(root_dir+'/UT_HAR/data/*.csv')
-    label_list = glob.glob(root_dir+'/UT_HAR/label/*.csv')
+    data_list = glob.glob(root_dir+'/data/*.csv')
+    label_list = glob.glob(root_dir+'/label/*.csv')
     WiFi_data = {}
     for data_dir in data_list:
         data_name = data_dir.split('/')[-1].split('.')[0]
@@ -28,73 +29,84 @@ def UT_HAR_dataset(root_dir):
 class CSI_Dataset(Dataset):
     """CSI dataset."""
 
-    def __init__(self, root_dir, modal='CSIamp', transform=None, few_shot=False, k=5, single_trace=True):
+    def __init__(self, root_dir, modal='CSIamp'):
         """
         Args:
-            root_dir (string): Directory with all the images.
-            modal (CSIamp/CSIphase): CSI data modal
-            transform (callable, optional): Optional transform to be applied
-                on a sample.
+            root_dir (string): Directory with all the .mat files organized in subfolders.
+            modal (CSIamp/CSIphase): CSI data modality key in the .mat files.
+            transform (callable, optional): Optional transform to be applied on a sample.
         """
         self.root_dir = root_dir
-        self.modal=modal
-        self.transform = transform
-        self.data_list = glob.glob(root_dir+'/*/*.mat')
-        self.folder = glob.glob(root_dir+'/*/')
-        self.category = {self.folder[i].split('/')[-2]:i for i in range(len(self.folder))}
+        self.modal = modal
+
+        # Build a sorted list of class folders and a mapping to integer labels
+        classes = sorted(glob.glob(root_dir + '/*/'))
+        class_to_idx = {os.path.basename(c[:-1]): i for i, c in enumerate(classes)}
+
+        # Build a flat list of (file_path, label) pairs
+        self.samples = []
+        for c in classes:
+            label = class_to_idx[os.path.basename(c[:-1])]
+            for mat_file in glob.glob(c + '*.mat'):
+                self.samples.append((mat_file, label))
 
     def __len__(self):
-        return len(self.data_list)
+        return len(self.samples)
 
     def __getitem__(self, idx):
-        if torch.is_tensor(idx):
-            idx = idx.tolist()
-            
-        sample_dir = self.data_list[idx]
-        y = self.category[sample_dir.split('/')[-2]]
-        x = sio.loadmat(sample_dir)[self.modal]
-        
-        # normalize
-        x = (x - 42.3199)/4.9802
-        
-        # sampling: 2000 -> 500
-        x = x[:,::4]
-        x = x.reshape(3, 114, 500)
-        
-        if self.transform:
-            x = self.transform(x)
-        
-        x = torch.FloatTensor(x)
+        # Support slicing: return a batch of samples
+        if isinstance(idx, slice):
+            indices = list(range(*idx.indices(len(self))))
+            samples = [self[i] for i in indices]
+            xs, ys = zip(*samples)
+            return torch.stack(xs, dim=0), ys
 
-        return x,y
+        # Handle a single index
+        path, label = self.samples[idx]
+        mat_data = sio.loadmat(path)
+        x = mat_data[self.modal]
+
+        # Pre-process: normalize and downsample
+        x = (x - 42.3199) / 4.9802
+        x = x[:, ::4]
+        x = x.reshape(3, 114, 500)
+
+        x = torch.from_numpy(x).float()
+        return x, label
 
 
 class Widar_Dataset(Dataset):
-    def __init__(self,root_dir):
-        self.root_dir = root_dir
-        self.data_list = glob.glob(root_dir+'/*/*.csv')
-        self.folder = glob.glob(root_dir+'/*/')
-        self.category = {self.folder[i].split('/')[-2]:i for i in range(len(self.folder))}
-        
+    def __init__(self, root_dir):       
+        self.samples = []
+        classes = sorted(glob.glob(root_dir+'/*/'))
+        class_to_idx = {os.path.basename(c[:-1]): i for i, c in enumerate(classes)}
+        for c in classes: 
+            label = class_to_idx[os.path.basename(c[:-1])]
+            for csv_file in glob.glob(c + '*.csv'):
+                self.samples.append((csv_file, label))
+                        
     def __len__(self):
-        return len(self.data_list)
+        return len(self.samples)
 
     def __getitem__(self, idx):
-        if torch.is_tensor(idx):
-            idx = idx.tolist()
+        if isinstance(idx, slice):        
+            # Compute the actual indices this slice refers to
+            indices = list(range(*idx.indices(len(self))))
+            samples = [self[i] for i in indices]
             
-        sample_dir = self.data_list[idx]
-        y = self.category[sample_dir.split('/')[-2]]
-        x = np.genfromtxt(sample_dir, delimiter=',')
+            # Separate inputs and labels
+            xs, ys = zip(*samples)
+            # ys = list(ys)
+                       
+            return torch.stack(xs, dim=0), ys
         
-        # normalize
+        path, label = self.samples[idx]
+        x = np.genfromtxt(path, delimiter=',')
+        
+        # Pre-process and convert to tensor
         x = (x - 0.0025)/0.0119
+        x = x.reshape(22, 20, 20)
+        x = torch.from_numpy(x).float()
         
-        # reshape: 22,400 -> 22,20,20
-        x = x.reshape(22,20,20)
-        # interpolate from 20x20 to 32x32
-        # x = self.reshape(x)
-        x = torch.FloatTensor(x)
-
-        return x,y
-
+        return x, label
+    
